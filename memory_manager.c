@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
+
 
 //memory storing the page tables
 unsigned char memory[64];
@@ -69,6 +71,25 @@ int allocate(int processId, int value)
 	return 0;
 }
 
+int getPageTable(int processId)
+{
+	if(registers[processId] == -1)
+	{
+		for(int i = 0; i < 4; i++)
+		{
+			if(freelist[i] == 0)
+			{
+				registers[i] = i*16;
+				freelist[i] = 1;
+				printf("put page table for PID %d into physical frame %d\n", processId, i);
+				break;			
+			}
+		}	
+	}else{
+		return registers[processId];
+	}
+}
+
 int main(int argc, char * argv[])
 {
 	
@@ -76,11 +97,39 @@ int main(int argc, char * argv[])
 	
 	while(1)
 	{
-		printf("Enter Input: ");
-		int pid, instruction,virtual_address,value;
-
-		scanf("%d,%d,%d,%d", &pid, &instruction, &virtual_address, &value);
-		printf("Input: %d, %d, %d, %d \n", pid, instruction, virtual_address, value);
+		printf("Instruction? ");
+		int pid, virtual_address,value;
+		char * instruction;
+		char * input;
+		scanf("%s", input);
+		printf("input: %s \n", input);		
+		
+		char * pidString = strtok(input, ",");
+		char * endptr;
+		pid = strtol(pidString, &endptr, 10);
+		char * splitWord = 0;		
+		int count = 0;
+		splitWord = pidString;
+		while( splitWord != NULL)
+		{
+			splitWord = strtok(NULL, ",");
+			if(splitWord != NULL)
+			{
+				if(count == 0)
+				{
+					instruction = splitWord;					
+				}else if(count == 1)
+				{
+					virtual_address = strtol(splitWord, &endptr, 10);				
+				}else if(count == 2)
+				{
+					value = strtol(splitWord, &endptr, 10);						
+				}
+				count++;
+			}			
+		}
+		printf("PID: %d instruction: %s value: %d \n", pid, instruction, value);
+		printf("virtual address: %d \n", virtual_address);
 		//first 2 bits of virtual address is the VPN
 		int offset_mask = 15;
 		int vpn_mask = 48;
@@ -90,54 +139,56 @@ int main(int argc, char * argv[])
 		printf("vpn: %d \n", vpn);
 		printf("offset: %d \n", offset);
 
-		int page_table_address = registers[pid];
-		switch(instruction)
+		//gets the page table address, if there isn't a page table, it allocates one.
+		int page_table_address = getPageTable(pid);
+		
+		if( strcmp(instruction, "allocate") == 0 )
 		{
-			case 0:
-				printf("Allocating...\n");
-				//check freelist, get a page, add a pte for that vpn.
-				
-				int page_table_index = vpn*16;
-				int address = -1;
-				for(int i = 0; i < 4; i++)
+			printf("Allocating...\n");
+			//check freelist, get a page, add a pte for that vpn.
+			
+			//page_table_address = vpn*16;
+			//if the page table can be fetched from the pid, why does the VPN even exist?
+			//there are actually only 4 page table entries, 0,1,2, or 3 (so we add vpn)
+			int page_table_entry_index = page_table_address + vpn;
+			
+			int address = -1;
+			for(int i = 0; i < 4; i++)
+			{
+				if(freelist[i] == 0)
 				{
-					if(freelist[i] == 0)
-					{
-						//found an empty page
-						address = i*16; //base address
-						freelist[i] = 1;
-											
-					}
-				}				
-				int pte_address = page_table_index + offset;
-
-				//create page table entry struct by casting the pointer
-				struct pte * pageTableEntry = (struct pte *)memory + pte_address;
-				
-				pageTableEntry->address = address;
-				pageTableEntry->write = value;
-				
-				//int result = allocate(pid, value);
-				
-
-				//where to set the valid bit?
-				if(result == 1)
-				{
-					printf("Allocation failed! memory full.");			
+					//found an empty page
+					address = i*16; //base address
+					freelist[i] = 1;
+										
 				}
-			break;
-			case 1:
-				printf("Storing...\n");
-				
-			break;
-			case 2:
-				printf("Loading...");
-				//index of the whole memory block [0, 63]			
-				int page_table_address = registers[pid];
-				int translated_address = page_table_address + offset;
-				int value = memory[translated_address];
-				printf("loaded value %d \n", value);
-			break;
+			}				
+			
+			//create page table entry struct by casting the pointer
+			struct pte * pageTableEntry = (struct pte *)memory + page_table_entry_index;
+			
+			pageTableEntry->address = address;
+			pageTableEntry->write = value;
+			
+			//int result = allocate(pid, value);
+			
+
+			//where to set the valid bit?
+			
+		}
+		if( strcmp(instruction, "load") == 0 )
+		{
+			int page_table_entry_index = page_table_address + vpn;
+			struct pte * pageTableEntry = (struct pte *)memory + page_table_entry_index;
+			int value_index = pageTableEntry->address + offset;
+			int read_value = memory[value_index];
+		}
+		if( strcmp(instruction, "store") == 0)
+		{
+			int page_table_entry_index = page_table_address + vpn;
+			struct pte * pageTableEntry = (struct pte *)memory + page_table_entry_index;
+			int value_index = pageTableEntry->address + offset;
+			memory[value_index] = value;
 		}
 
 	}

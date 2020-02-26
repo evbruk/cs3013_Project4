@@ -190,6 +190,8 @@ int main(int argc, char * argv[])
 			struct pte * pageTableEntry = (struct pte *)memory + page_table_entry_index;
 			int value_index = pageTableEntry->address + offset;
 			memory[value_index] = value;
+			pageTableEntry->address =  address;
+			printf("Store value %d at virtual address %d (physical address %d)\n", value, virtual_address, value_index);
 		}
 
 	}

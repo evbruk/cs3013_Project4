@@ -169,7 +169,8 @@ int main(int argc, char * argv[])
 			
 			pageTableEntry->address = address;
 			pageTableEntry->write = value;
-			
+			int frameNumber = (address % 16) + 1;
+			printf("Mapped virtual address %d into physical frame %d\n", (address % 16),  frameNumber);
 			//int result = allocate(pid, value);
 			
 

@@ -170,7 +170,7 @@ int main(int argc, char * argv[])
 			pageTableEntry->address = address;
 			pageTableEntry->write = value;
 			int frameNumber = (address % 16) + 1;
-			printf("Mapped virtual address %d into physical frame %d\n", (address % 16),  frameNumber);
+			printf("Mapped virtual address %d into physical frame %d\n", virtual_address,  frameNumber);
 			//int result = allocate(pid, value);
 			
 
@@ -183,6 +183,9 @@ int main(int argc, char * argv[])
 			struct pte * pageTableEntry = (struct pte *)memory + page_table_entry_index;
 			int value_index = pageTableEntry->address + offset;
 			int read_value = memory[value_index];
+
+
+
 		}
 		if( strcmp(instruction, "store") == 0)
 		{

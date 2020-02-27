@@ -85,9 +85,27 @@ int getPageTable(int processId)
 				break;			
 			}
 		}	
-	}else{
-		return registers[processId];
 	}
+	
+	return registers[processId];	
+}
+
+int getPageNumber(int address)
+{
+	if( address < 16)
+	{
+		return 0;	
+	}else if(address > 15 && address < 32)
+	{
+		return 1;	
+	}else if(address > 31 && address < 48)
+	{
+		return 2;	
+	}else if(address > 47)
+	{
+		return 3;	
+	}
+	return -1;
 }
 
 int main(int argc, char * argv[])
@@ -128,23 +146,23 @@ int main(int argc, char * argv[])
 				count++;
 			}			
 		}
-		printf("PID: %d instruction: %s value: %d \n", pid, instruction, value);
-		printf("virtual address: %d \n", virtual_address);
+		//printf("PID: %d instruction: %s value: %d \n", pid, instruction, value);
+		//printf("virtual address: %d \n", virtual_address);
 		//first 2 bits of virtual address is the VPN
 		int offset_mask = 15;
 		int vpn_mask = 48;
 		int vpn = virtual_address & vpn_mask;
 		int offset = virtual_address & offset_mask;
 
-		printf("vpn: %d \n", vpn);
-		printf("offset: %d \n", offset);
+		//printf("vpn: %d \n", vpn);
+		//printf("offset: %d \n", offset);
 
 		//gets the page table address, if there isn't a page table, it allocates one.
 		int page_table_address = getPageTable(pid);
 		
 		if( strcmp(instruction, "allocate") == 0 )
 		{
-			printf("Allocating...\n");
+			//printf("Allocating...\n");
 			//check freelist, get a page, add a pte for that vpn.
 			
 			//page_table_address = vpn*16;
@@ -152,25 +170,35 @@ int main(int argc, char * argv[])
 			//there are actually only 4 page table entries, 0,1,2, or 3 (so we add vpn)
 			int page_table_entry_index = page_table_address + vpn;
 			
-			int address = -1;
-			for(int i = 0; i < 4; i++)
-			{
-				if(freelist[i] == 0)
-				{
-					//found an empty page
-					address = i*16; //base address
-					freelist[i] = 1;
-										
-				}
-			}				
+					
+			
 			
 			//create page table entry struct by casting the pointer
 			struct pte * pageTableEntry = (struct pte *)memory + page_table_entry_index;
-			
-			pageTableEntry->address = address;
-			pageTableEntry->write = value;
-			int frameNumber = (address % 16) + 1;
-			printf("Mapped virtual address %d into physical frame %d\n", virtual_address,  frameNumber);
+			if(pageTableEntry->address != 0)
+			{
+				printf("Updating permissions for virtual page %d (frame %d) \n", vpn, getPageNumber(pageTableEntry->address));
+				pageTableEntry->write = value;
+			}else{
+				
+				int address = -1;
+				for(int i = 0; i < 4; i++)
+				{
+					if(freelist[i] == 0)
+					{
+						//found an empty page
+						address = i*16; //base address
+						freelist[i] = 1;
+						break;		
+					}
+				}
+				
+				int frameNumber = getPageNumber(address);
+				pageTableEntry->address = address;
+				pageTableEntry->write = value;
+				
+				printf("Mapped virtual address %d into physical frame %d\n", virtual_address,  frameNumber);			
+			}
 			//int result = allocate(pid, value);
 			
 
@@ -184,17 +212,24 @@ int main(int argc, char * argv[])
 			int value_index = pageTableEntry->address + offset;
 			int read_value = memory[value_index];
 
-
+			printf("The value %d is virtual address %d \n", read_value, virtual_address);
 
 		}
 		if( strcmp(instruction, "store") == 0)
 		{
 			int page_table_entry_index = page_table_address + vpn;
 			struct pte * pageTableEntry = (struct pte *)memory + page_table_entry_index;
-			int value_index = pageTableEntry->address + offset;
-			memory[value_index] = value;
-			pageTableEntry->address =  address;
-			printf("Store value %d at virtual address %d (physical address %d)\n", value, virtual_address, value_index);
+			if(pageTableEntry->write == 0)
+			{
+				printf("Error: writes are not allowed to this page \n");
+			}else
+			{
+				int value_index = pageTableEntry->address + offset;
+				memory[value_index] = value;
+			
+				printf("Store value %d at virtual address %d (physical address %d)\n", value, virtual_address, value_index);
+			}		
+			
 		}
 
 	}

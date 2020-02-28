@@ -13,7 +13,11 @@ int freelist[4] = {0,0,0,0};
 int writable[4] = {0,0,0,0};
 //simulated hardware registers
 int registers[4] = {-1, -1, -1, -1};
+int pageTableUses[4] = {0,0,0,0};
+int pageTablePresent[4] = {1,1,1,1};
 
+int swap();
+int fetch(int pid, int vpn, int address);
 //counter of commands issued over time, used for LRU policy
 int commandsEntered = 0;
 
@@ -100,7 +104,18 @@ int getPageTable(int processId)
 		}
 	}
 	
-	return registers[processId];	
+	if(pageTablePresent[processId])
+	{
+		pageTableUses[processId]++;
+		return registers[processId];
+	}else
+	{
+		//fetch
+		printf("Fetching page table from disk for PID %d\n", processId);
+		fetch(processId, -1, registers[processId]);
+		pageTablePresent[processId] = 1;
+	}
+		
 }
 
 int getPageNumber(int address)
@@ -126,72 +141,16 @@ int getDiskAddress(int pid)
 	return pid * 5;
 }
 
-//physical_address is the physical address of
-int swap()
-{
-	//copy memory from memory + physical address of page frame, to disk, width of 16 bytes
-	
-	int diskOffset = 0; //so that the page table isn't overwritten if vpn is 0
-	int pageToBeSwapped = 0;
-	
-	int smallestUses = 10000;
-	int smallestAddress = 0;
-	int vpn_of_eviction = 0;
-	int pid_of_eviction = 0;
-	
-	struct pte * evicted_page;
-	for(int i = 0; i < 4; i++)
-	{
-		//page table exists
-		if(registers[i] != -1)
-		{
-			int page_table_address = registers[i];	
-			
-			for(int j = 0; j < 4; j++)
-			{
-				struct pte * pageTableEntry = (struct pte *)memory + page_table_address + j;
-				if(pageTableEntry->address != 0)
-				{
-					//page table entry is in use
-					if(pageTableEntry->useCounter < smallestUses)
-					{
-						smallestUses = pageTableEntry->useCounter;
-						smallestAddress = pageTableEntry->address;
-						vpn_of_eviction = j; //keep track for later
-						pid_of_eviction = i;
-						pageTableEntry->present = 0;
-						evicted_page = pageTableEntry;		
-					}
-				}
-			}
-		}
-	}
-
-	pageToBeSwapped = smallestAddress;
-	diskOffset = vpn_of_eviction + 1; //j is the "vpn"
-
-	for(int i = 0; i < 4; i++)
-	{
-		if(registers[i] == pageToBeSwapped) //make sure that we put the page table at index 0
-		{
-			//we are swapping out a page table so we should stick it at index 0
-			//for that process on disk
-			diskOffset = 0;	
-		}	
-	}
-	
-	int index = getDiskAddress(pid_of_eviction) + diskOffset;
-	memcpy((disk + (16*index)), (memory + pageToBeSwapped), 16);
-	printf("Swapped frame %d to disk at swap slot %d\n", getPageNumber(pageToBeSwapped), pid_of_eviction);
-	evicted_page->address = 16*index;
-	return pageToBeSwapped; //return the address of the evicted page
-}
-
 //physical_address == base address of page in the disk (grabbed from the pte)
 int fetch(int pid, int vpn, int disk_address)
 {
-	//this might get tricky if this is a page table?	
+	//this might get tricky if this is a page table?
 	int diskAddress = getDiskAddress(pid) + vpn + 1;
+	if(vpn == -1) //flag for page table
+	{
+		diskAddress = getDiskAddress(pid);
+		pageTablePresent[pid] = 1;
+	}
 	//if a page table we just won't have an offset
 	
 	//find free page and get physical_address from there.
@@ -213,6 +172,97 @@ int fetch(int pid, int vpn, int disk_address)
 	memcpy((memory + physical_address), (disk + disk_address), 16);
 	return physical_address;
 }
+
+//physical_address is the physical address of
+int swap()
+{
+	//copy memory from memory + physical address of page frame, to disk, width of 16 bytes
+	
+	int diskOffset = 0; //so that the page table isn't overwritten if vpn is 0
+	int pageToBeSwapped = 0;
+	
+	int smallestUses = 10000;
+	int smallestAddress = 0;
+	int vpn_of_eviction = 0;
+	int pid_of_eviction = 0;
+	
+	struct pte * evicted_page;
+	for(int i = 0; i < 4; i++)
+	{
+		if(pageTableUses[i] < smallestUses)
+		{
+			smallestUses = pageTableUses[i];
+			smallestAddress = registers[i];
+			diskOffset = 0;
+			pid_of_eviction = i;
+			printf("Chose pid: %d for eviction\n", pid_of_eviction);
+			break;
+		}
+	}
+	
+	for(int i = 0; i < 4; i++)
+	{
+		//page table exists
+		if(registers[i] != -1)
+		{
+			int page_table_address = registers[i];	
+			
+			for(int j = 0; j < 4; j++)
+			{
+				struct pte * pageTableEntry = (struct pte *)memory + page_table_address + j;
+				if(pageTableEntry->address != 0)
+				{
+					//page table entry is in use
+					if(pageTableEntry->useCounter < smallestUses)
+					{
+						smallestUses = pageTableEntry->useCounter;
+						smallestAddress = pageTableEntry->address;
+						vpn_of_eviction = j; //keep track for later
+						pid_of_eviction = i;
+						
+						evicted_page = pageTableEntry;
+						diskOffset = vpn_of_eviction + 1; //j is the "vpn"	
+					}
+				}
+			}
+		}
+	}
+
+	pageToBeSwapped = smallestAddress;
+	
+	//this may be redundant
+	for(int i = 0; i < 4; i++)
+	{
+		if(registers[i] == pageToBeSwapped) //make sure that we put the page table at index 0
+		{
+			//we are swapping out a page table so we should stick it at index 0
+			//for that process on disk
+			diskOffset = 0;	
+		}	
+	}
+	if(diskOffset > 0)
+	{
+		evicted_page->present = 0;
+		int index = getDiskAddress(pid_of_eviction) + diskOffset;
+		memcpy((disk + (16*index)), (memory + pageToBeSwapped), 16);
+		printf("Swapped frame %d to disk at swap slot %d\n", getPageNumber(pageToBeSwapped), pid_of_eviction);
+		evicted_page->address = 16*index;
+	
+	}else
+	{
+		//evicting a page table, so
+		printf("swapping page table of process %d to disk. \n", pid_of_eviction);
+		pageTablePresent[pid_of_eviction] = 0;
+		pageTableUses[pid_of_eviction] = 0;
+		int index = getDiskAddress(pid_of_eviction);
+		registers[pid_of_eviction] = 16*index;
+		memcpy((disk + (16*index)), (memory + pageToBeSwapped), 16);
+		
+	}
+	return pageToBeSwapped; //return the address of the evicted page
+}
+
+
 
 int main(int argc, char * argv[])
 {
@@ -283,9 +333,16 @@ int main(int argc, char * argv[])
 			
 					
 			//create page table entry struct by casting the pointer
+			//bug is probably something to do with grabbing someone elses' page table entry?
 			struct pte * pageTableEntry = (struct pte *)memory + page_table_entry_index;
+			//check for ownership!
+			/*
+			if(memory + page_table_entry_index) > page_table_addres && (memory + page_table_entry_index < page_table_entry_index) + 16)
+			*/ //Maybe something like this? ^^^
 			if(pageTableEntry->address != 0)
 			{
+				//rn there is a bug where permissions are updated when a page should really be swapped. (probably a problem with ownership)
+				printf("pageTableEntry->address: %d \n", pageTableEntry->address);
 				printf("Updating permissions for virtual page %d (frame %d) \n", vpn, getPageNumber(pageTableEntry->address));
 				pageTableEntry->write = value;
 			}else{

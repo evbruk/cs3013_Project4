@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+//#include <limits.h>
 
 
 //memory storing the page tables
@@ -13,12 +14,15 @@ int writable[4] = {0,0,0,0};
 //simulated hardware registers
 int registers[4] = {-1, -1, -1, -1};
 
+//counter of commands issued over time, used for LRU policy
+int commandsEntered = 0;
+
 //struct for each page table entry
 struct pte {
-	uint8_t address:6;
-	uint8_t present:1; //if it is present/valid
-	uint8_t write:1; //for write permission
-	uint8_t present; //to denote if the page is in fact in memory, or on disk
+	uint8_t address;
+	uint8_t present; //if it is present/valid
+	uint8_t write; //for write permission
+	uint8_t useCounter; //used for the LRU eviction policy
 };
 
 
@@ -91,7 +95,8 @@ int getPageTable(int processId)
 		}
 		if(registers[processId] == -1)
 		{
-			//we must swap		
+			//we must swap	
+			printf("registers[processId] == -1 ******************\n");
 		}
 	}
 	
@@ -121,25 +126,92 @@ int getDiskAddress(int pid)
 	return pid * 5;
 }
 
-int swap(int pid, int vpn, int physical_address)
+//physical_address is the physical address of
+int swap()
 {
 	//copy memory from memory + physical address of page frame, to disk, width of 16 bytes
 	
-	int diskOffset = vpn + 1; //so that the page table isn't overwritten if vpn is 0
+	int diskOffset = 0; //so that the page table isn't overwritten if vpn is 0
 	int pageToBeSwapped = 0;
+	
+	int smallestUses = 10000;
+	int smallestAddress = 0;
+	int vpn_of_eviction = 0;
+	int pid_of_eviction = 0;
+	
+	struct pte * evicted_page;
 	for(int i = 0; i < 4; i++)
 	{
-		if(registers[i] == pageToBeSwapped)
+		//page table exists
+		if(registers[i] != -1)
+		{
+			int page_table_address = registers[i];	
+			
+			for(int j = 0; j < 4; j++)
+			{
+				struct pte * pageTableEntry = (struct pte *)memory + page_table_address + j;
+				if(pageTableEntry->address != 0)
+				{
+					//page table entry is in use
+					if(pageTableEntry->useCounter < smallestUses)
+					{
+						smallestUses = pageTableEntry->useCounter;
+						smallestAddress = pageTableEntry->address;
+						vpn_of_eviction = j; //keep track for later
+						pid_of_eviction = i;
+						pageTableEntry->present = 0;
+						evicted_page = pageTableEntry;		
+					}
+				}
+			}
+		}
+	}
+
+	pageToBeSwapped = smallestAddress;
+	diskOffset = vpn_of_eviction + 1; //j is the "vpn"
+
+	for(int i = 0; i < 4; i++)
+	{
+		if(registers[i] == pageToBeSwapped) //make sure that we put the page table at index 0
 		{
 			//we are swapping out a page table so we should stick it at index 0
 			//for that process on disk
 			diskOffset = 0;	
 		}	
 	}
-	int index = getDiskAddress(pid) + diskOffset;
-	memcpy((disk + (16*index)), (memory + physical_address), 16);
+	
+	int index = getDiskAddress(pid_of_eviction) + diskOffset;
+	memcpy((disk + (16*index)), (memory + pageToBeSwapped), 16);
+	printf("Swapped frame %d to disk at swap slot %d\n", getPageNumber(pageToBeSwapped), pid_of_eviction);
+	evicted_page->address = 16*index;
+	return pageToBeSwapped; //return the address of the evicted page
+}
 
-	return disk + (16*index); //return the disk address for updating the PTE
+//physical_address == base address of page in the disk (grabbed from the pte)
+int fetch(int pid, int vpn, int disk_address)
+{
+	//this might get tricky if this is a page table?	
+	int diskAddress = getDiskAddress(pid) + vpn + 1;
+	//if a page table we just won't have an offset
+	
+	//find free page and get physical_address from there.
+	int physical_address = -1;
+	for(int i = 0; i < 4; i++)
+	{
+		if(freelist[i] == 0)
+		{
+			physical_address = i*16;
+		}
+	}
+	
+	if(physical_address == -1)
+	{
+		//swap out and grab the evicted address
+		physical_address = swap();	
+	}
+	
+	memcpy((memory + physical_address), (disk + disk_address), 16);
+	return physical_address;
 }
 
 int main(int argc, char * argv[])
@@ -152,16 +224,20 @@ int main(int argc, char * argv[])
 		printf("Instruction? ");
 		int pid, virtual_address,value;
 		char * instruction;
-		char * input;
+		char input[256];
 		scanf("%s", input);
 		printf("input: %s \n", input);		
 		
+		
+		//printf("before strtok call \n");
 		char * pidString = strtok(input, ",");
+		//printf("after strtok call \n");
 		char * endptr;
 		pid = strtol(pidString, &endptr, 10);
 		char * splitWord = 0;		
 		int count = 0;
 		splitWord = pidString;
+		printf("before processing commands\n");
 		while( splitWord != NULL)
 		{
 			splitWord = strtok(NULL, ",");
@@ -180,6 +256,7 @@ int main(int argc, char * argv[])
 				count++;
 			}			
 		}
+		commandsEntered++;
 		//printf("PID: %d instruction: %s value: %d \n", pid, instruction, value);
 		//printf("virtual address: %d \n", virtual_address);
 		//first 2 bits of virtual address is the VPN
@@ -196,7 +273,7 @@ int main(int argc, char * argv[])
 		
 		if( strcmp(instruction, "allocate") == 0 )
 		{
-			//printf("Allocating...\n");
+			printf("Allocating...\n");
 			//check freelist, get a page, add a pte for that vpn.
 			
 			//page_table_address = vpn*16;
@@ -224,9 +301,11 @@ int main(int argc, char * argv[])
 						break;		
 					}
 				}
-				
 				if ( address == -1)
 				{
+					printf("Swapping... \n");
+					int swappedPage = swap();
+					address = swappedPage;					
 					//we must swap a page out to disk
 					//how to determine index of the disk array? -->vpn
 					//pick a page, figure out the vpn that points to it, store that in the owner process's disk
@@ -238,7 +317,8 @@ int main(int argc, char * argv[])
 				int frameNumber = getPageNumber(address);
 				pageTableEntry->address = address;
 				pageTableEntry->write = value;
-				
+				pageTableEntry->present = 1;
+				pageTableEntry->useCounter = commandsEntered;
 				printf("Mapped virtual address %d into physical frame %d\n", virtual_address,  frameNumber);			
 			}
 			//int result = allocate(pid, value);
@@ -249,17 +329,21 @@ int main(int argc, char * argv[])
 		}
 		if( strcmp(instruction, "load") == 0 )
 		{
+			int page_table_entry_index = page_table_address + vpn;
+			struct pte * pageTableEntry = (struct pte *)memory + page_table_entry_index;
+			int address = 0;
 			if(pageTableEntry->present == 0)
 			{
-				printf("Swapping from disk...");
+				printf("fetching from disk...\n");
+				address = fetch(pid, vpn, pageTableEntry->address);
+				pageTableEntry->address = address;
 				//swap(pid, pageTableEntry->address); //modify function to support fetching too		
 			}
 			
-			int page_table_entry_index = page_table_address + vpn;
-			struct pte * pageTableEntry = (struct pte *)memory + page_table_entry_index;
+			
 			int value_index = pageTableEntry->address + offset;
 			int read_value = memory[value_index];
-			
+			pageTableEntry->useCounter = commandsEntered;
 			printf("The value %d is virtual address %d \n", read_value, virtual_address);
 
 		}
@@ -267,12 +351,18 @@ int main(int argc, char * argv[])
 		{
 			int page_table_entry_index = page_table_address + vpn;
 			struct pte * pageTableEntry = (struct pte *)memory + page_table_entry_index;
+			pageTableEntry->useCounter = commandsEntered;
 			if(pageTableEntry->write == 0)
 			{
 				printf("Error: writes are not allowed to this page \n");
 			}else if(pageTableEntry->present == 0)
 			{
-				printf("Swapping from disk...");
+				printf("Fetching from disk... \n");
+				int address = fetch(pid, vpn, pageTableEntry->address);
+				pageTableEntry->address = address;
+				int index = pageTableEntry->address + offset;
+				memory[index] = value;
+				printf("Store value %d at virtual address %d (physical address %d)\n", value, virtual_address, index);
 				//swap(pid, pageTableEntry->address);//change function to support fetching too.			
 			}
 			else

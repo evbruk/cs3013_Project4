@@ -83,12 +83,16 @@ int getPageTable(int processId)
 		{
 			if(freelist[i] == 0)
 			{
-				registers[i] = i*16;
+				registers[processId] = i*16;
 				freelist[i] = 1;
 				printf("put page table for PID %d into physical frame %d\n", processId, i);
 				break;			
 			}
-		}	
+		}
+		if(registers[processId] == -1)
+		{
+			//we must swap		
+		}
 	}
 	
 	return registers[processId];	
@@ -117,12 +121,25 @@ int getDiskAddress(int pid)
 	return pid * 5;
 }
 
-int swap(int pid, int physical_address)
+int swap(int pid, int vpn, int physical_address)
 {
 	//copy memory from memory + physical address of page frame, to disk, width of 16 bytes
-	int index = getDiskAddress(pid) + 0;
 	
+	int diskOffset = vpn + 1; //so that the page table isn't overwritten if vpn is 0
+	int pageToBeSwapped = 0;
+	for(int i = 0; i < 4; i++)
+	{
+		if(registers[i] == pageToBeSwapped)
+		{
+			//we are swapping out a page table so we should stick it at index 0
+			//for that process on disk
+			diskOffset = 0;	
+		}	
+	}
+	int index = getDiskAddress(pid) + diskOffset;
 	memcpy((disk + (16*index)), (memory + physical_address), 16);
+
+	return disk + (16*index); //return the disk address for updating the PTE
 }
 
 int main(int argc, char * argv[])
@@ -188,8 +205,6 @@ int main(int argc, char * argv[])
 			int page_table_entry_index = page_table_address + vpn;
 			
 					
-			
-			
 			//create page table entry struct by casting the pointer
 			struct pte * pageTableEntry = (struct pte *)memory + page_table_entry_index;
 			if(pageTableEntry->address != 0)
@@ -213,7 +228,12 @@ int main(int argc, char * argv[])
 				if ( address == -1)
 				{
 					//we must swap a page out to disk
-					//how to determine index of the disk array?				
+					//how to determine index of the disk array? -->vpn
+					//pick a page, figure out the vpn that points to it, store that in the owner process's disk
+					//figuring out the VPN: find the owner Process, search for address in page table
+						//might involve searching every page table
+
+					//get page table entry for swapped out portion (got from search) and update the present bit to 0			
 				}
 				int frameNumber = getPageNumber(address);
 				pageTableEntry->address = address;
@@ -232,7 +252,7 @@ int main(int argc, char * argv[])
 			if(pageTableEntry->present == 0)
 			{
 				printf("Swapping from disk...");
-				//swap(pid, pageTableEntry->address);			
+				//swap(pid, pageTableEntry->address); //modify function to support fetching too		
 			}
 			
 			int page_table_entry_index = page_table_address + vpn;
@@ -253,7 +273,7 @@ int main(int argc, char * argv[])
 			}else if(pageTableEntry->present == 0)
 			{
 				printf("Swapping from disk...");
-				//swap(pid, pageTableEntry->address);				
+				//swap(pid, pageTableEntry->address);//change function to support fetching too.			
 			}
 			else
 			{

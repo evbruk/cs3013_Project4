@@ -1,0 +1,15 @@
+Initializing... 
+Instruction? 0,allocate,0,1
+input: 0,allocate,0,1 
+put page table for PID 0 into physical frame 0
+Mapped virtual address 0 into physical frame 1
+
+Instruction? 0,store,12,24
+input: 0,store,12,24 
+Store value 24 at virtual address 12 (physical address 28)
+
+Instruction? 0,load,12,0
+input: 0,load,12,0 
+The value 24 is virtual address 12 
+ 
+

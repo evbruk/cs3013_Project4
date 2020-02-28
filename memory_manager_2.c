@@ -44,7 +44,7 @@ int allocate(int processId, int value)
 			{
 				//page is available
 				registers[processId] = i*16;
-				freelist[i] = 1;
+				freelist[i] = 1; 
 				if(value) //if the page should be writable.
 				{
 					writable[i] = 1;			

@@ -79,7 +79,7 @@ int getPageTable(int processId)
 		{
 			if(freelist[i] == 0)
 			{
-				registers[i] = i*16;
+				registers[processId] = i*16;
 				freelist[i] = 1;
 				printf("put page table for PID %d into physical frame %d\n", processId, i);
 				break;			
@@ -118,13 +118,23 @@ int main(int argc, char * argv[])
 		printf("Instruction? ");
 		int pid, virtual_address,value;
 		char * instruction;
-		char * input;
+		char input[256];
 		scanf("%s", input);
 		printf("input: %s \n", input);		
 		
 		char * pidString = strtok(input, ",");
 		char * endptr;
+		if(pidString == NULL)
+		{
+			printf("Error. Invalid input.\n");
+			continue;
+		}
 		pid = strtol(pidString, &endptr, 10);
+		if(*endptr != '\0' || pid > 3 || pid < 0)
+		{
+			printf("Error. Invalid input.\n");
+			continue;
+		}
 		char * splitWord = 0;		
 		int count = 0;
 		splitWord = pidString;

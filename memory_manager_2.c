@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <errno.h>
 //#include <limits.h>
 
 
@@ -30,59 +31,6 @@ struct pte {
 };
 
 
-
-int allocate(int processId, int value)
-{
-	//first, check if a page table exists
-	//registers[processId] == address of the process page table
-	if(registers[processId] == -1)
-	{
-		//page table does not exist, we must create it
-		for(int i = 0; i < 4; i++)
-		{
-			if(freelist[i] == 0)
-			{
-				//page is available
-				registers[processId] = i*16;
-				freelist[i] = 1; 
-				if(value) //if the page should be writable.
-				{
-					writable[i] = 1;			
-				}
-				break;
-				//create and allocate a bunch of pte?	
-			}	
-		}
-	}
-	int page_table_address = registers[processId];
-	
-	//cast the array to a struct pte pointer (1 byte in size)
-	struct pte * page_table_pointer;
-	page_table_pointer = (struct pte *)&registers;
-	//increment the pointer to point to the start of our page table
-	page_table_pointer += page_table_address;
-	
-	printf("page table address for process %d: %d \n", processId, page_table_address);
-	//create a page table entry to map between the virtual and physical address
-	for(int i = 0; i < 4; i++)
-	{
-		if(freelist[i] == 0)
-		{
-			//page frame is free
-			freelist[i] == 1;
-			//create a page table entry to map between the virtual and physical address
-			
-			
-		
-			//registers[processId] + offset?
-			//create a page table entry		
-		}	
-	}
-
-	//add case for full memory (return 1)
-	return 0;
-}
-
 int getPageTable(int processId)
 {
 	if(registers[processId] == -1)
@@ -99,14 +47,14 @@ int getPageTable(int processId)
 		}
 		if(registers[processId] == -1)
 		{
-			//we must swap	
-			printf("registers[processId] == -1 ******************\n");
+			int address = swap();
+			registers[processId] = address;
 		}
 	}
 	
 	if(pageTablePresent[processId])
 	{
-		pageTableUses[processId]++;
+		pageTableUses[processId] = commandsEntered;
 		return registers[processId];
 	}else
 	{
@@ -170,6 +118,7 @@ int fetch(int pid, int vpn, int disk_address)
 	}
 	
 	memcpy((memory + physical_address), (disk + disk_address), 16);
+	printf("swapped disk slot %d into frame %d\n", pid, getPageNumber(physical_address));
 	return physical_address;
 }
 
@@ -195,7 +144,6 @@ int swap()
 			smallestAddress = registers[i];
 			diskOffset = 0;
 			pid_of_eviction = i;
-			printf("Chose pid: %d for eviction\n", pid_of_eviction);
 			break;
 		}
 	}
@@ -276,18 +224,23 @@ int main(int argc, char * argv[])
 		char * instruction;
 		char input[256];
 		scanf("%s", input);
-		printf("input: %s \n", input);		
 		
-		
-		//printf("before strtok call \n");
 		char * pidString = strtok(input, ",");
-		//printf("after strtok call \n");
 		char * endptr;
+		if(pidString == NULL)
+		{
+			printf("Error. Invalid input.\n");
+			continue;
+		}
 		pid = strtol(pidString, &endptr, 10);
+		if(*endptr != '\0' || pid > 3 || pid < 0)
+		{
+			printf("Error. Invalid input.\n");
+			continue;
+		}
 		char * splitWord = 0;		
 		int count = 0;
 		splitWord = pidString;
-		printf("before processing commands\n");
 		while( splitWord != NULL)
 		{
 			splitWord = strtok(NULL, ",");
@@ -312,7 +265,7 @@ int main(int argc, char * argv[])
 		//first 2 bits of virtual address is the VPN
 		int offset_mask = 15;
 		int vpn_mask = 48;
-		int vpn = virtual_address & vpn_mask;
+		int vpn = (virtual_address & vpn_mask) >> 4;
 		int offset = virtual_address & offset_mask;
 
 		//printf("vpn: %d \n", vpn);
@@ -326,25 +279,24 @@ int main(int argc, char * argv[])
 			printf("Allocating...\n");
 			//check freelist, get a page, add a pte for that vpn.
 			
-			//page_table_address = vpn*16;
-			//if the page table can be fetched from the pid, why does the VPN even exist?
-			//there are actually only 4 page table entries, 0,1,2, or 3 (so we add vpn)
 			int page_table_entry_index = page_table_address + vpn;
 			
-					
-			//create page table entry struct by casting the pointer
-			//bug is probably something to do with grabbing someone elses' page table entry?
+			
 			struct pte * pageTableEntry = (struct pte *)memory + page_table_entry_index;
-			//check for ownership!
+			
 			/*
 			if(memory + page_table_entry_index) > page_table_addres && (memory + page_table_entry_index < page_table_entry_index) + 16)
 			*/ //Maybe something like this? ^^^
 			if(pageTableEntry->address != 0)
 			{
-				//rn there is a bug where permissions are updated when a page should really be swapped. (probably a problem with ownership)
-				printf("pageTableEntry->address: %d \n", pageTableEntry->address);
-				printf("Updating permissions for virtual page %d (frame %d) \n", vpn, getPageNumber(pageTableEntry->address));
-				pageTableEntry->write = value;
+				if(pageTableEntry->write == 1)
+				{
+					printf("Error: virtual page %d is already mapped with rw_bit=1\n", vpn);
+				}else
+				{
+					printf("Updating permissions for virtual page %d (frame %d) \n", vpn, getPageNumber(pageTableEntry->address));
+					pageTableEntry->write = value;
+				}
 			}else{
 				
 				int address = -1;
@@ -363,13 +315,7 @@ int main(int argc, char * argv[])
 					printf("Swapping... \n");
 					int swappedPage = swap();
 					address = swappedPage;					
-					//we must swap a page out to disk
-					//how to determine index of the disk array? -->vpn
-					//pick a page, figure out the vpn that points to it, store that in the owner process's disk
-					//figuring out the VPN: find the owner Process, search for address in page table
-						//might involve searching every page table
-
-					//get page table entry for swapped out portion (got from search) and update the present bit to 0			
+					
 				}
 				int frameNumber = getPageNumber(address);
 				pageTableEntry->address = address;
@@ -378,11 +324,7 @@ int main(int argc, char * argv[])
 				pageTableEntry->useCounter = commandsEntered;
 				printf("Mapped virtual address %d into physical frame %d\n", virtual_address,  frameNumber);			
 			}
-			//int result = allocate(pid, value);
-			
-
-			//where to set the valid bit?
-			
+				
 		}
 		if( strcmp(instruction, "load") == 0 )
 		{
@@ -394,7 +336,6 @@ int main(int argc, char * argv[])
 				printf("fetching from disk...\n");
 				address = fetch(pid, vpn, pageTableEntry->address);
 				pageTableEntry->address = address;
-				//swap(pid, pageTableEntry->address); //modify function to support fetching too		
 			}
 			
 			
@@ -420,7 +361,6 @@ int main(int argc, char * argv[])
 				int index = pageTableEntry->address + offset;
 				memory[index] = value;
 				printf("Store value %d at virtual address %d (physical address %d)\n", value, virtual_address, index);
-				//swap(pid, pageTableEntry->address);//change function to support fetching too.			
 			}
 			else
 			{
